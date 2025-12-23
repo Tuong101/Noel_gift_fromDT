@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Merry Christmas - From Chris</title>
+    <title>Merry Christmas - From Ditun</title>
     <style>
         body { margin: 0; overflow: hidden; background-color: #000000; font-family: 'Times New Roman', serif; }
         #canvas-container { width: 100vw; height: 100vh; position: absolute; top: 0; left: 0; z-index: 1; }
@@ -16,6 +16,35 @@
             align-items: center;
             padding-top: 40px;
             box-sizing: border-box;
+        }
+
+        /* --- PHẦN POPUP HIỂN THỊ ẢNH (MỚI) --- */
+        #image-overlay {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0, 0, 0, 0.85); /* Nền đen mờ */
+            z-index: 1000;
+            display: flex; flex-direction: column;
+            justify-content: center; align-items: center;
+            opacity: 0; pointer-events: none;
+            transition: opacity 0.3s ease;
+            backdrop-filter: blur(5px);
+        }
+        #image-overlay.active {
+            opacity: 1; pointer-events: auto;
+        }
+        #overlay-img {
+            max-width: 90%; max-height: 80%;
+            border: 2px solid #d4af37; /* Viền vàng sang trọng */
+            box-shadow: 0 0 30px rgba(212, 175, 55, 0.5);
+            border-radius: 4px;
+            transform: scale(0.8); transition: transform 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+        }
+        #image-overlay.active #overlay-img {
+            transform: scale(1);
+        }
+        .close-hint {
+            color: #fff; margin-top: 15px; font-family: 'Cinzel', serif;
+            letter-spacing: 2px; font-size: 14px; opacity: 0.8; cursor: pointer;
         }
         
         /* Loading */
@@ -45,6 +74,7 @@
             -webkit-background-clip: text; -webkit-text-fill-color: transparent;
             font-family: 'Cinzel', 'Times New Roman', serif;
             opacity: 0.9;
+            pointer-events: none; 
         }
         
         .message {
@@ -54,7 +84,11 @@
             letter-spacing: 2px;
             text-transform: uppercase;
             font-family: 'Cinzel', serif;
+            pointer-events: none;
         }
+
+        body { cursor: grab; }
+        body.interacting { cursor: pointer; }
     </style>
     
     <style>
@@ -74,14 +108,19 @@
 
     <div id="loader">
         <div class="spinner"></div>
-        <div class="loader-text">Đang tải món quà...</div>
+        <div class="loader-text">Đang tải kỷ niệm...</div>
+    </div>
+
+    <div id="image-overlay">
+        <img id="overlay-img" src="" alt="Memory">
+        <div class="close-hint">Nhấn vào màn hình để đóng</div>
     </div>
 
     <div id="canvas-container"></div>
 
     <div id="ui-layer">
-        <h1 id="header-title">Merry Christmas</h1>
-        <div class="message">Di chuyển chuột để xoay cây thông</div>
+        <h1 id="header-title">Merry Christmas - HPBD SailorMoon</h1>
+        <div class="message">Lăn chuột để xoay - Click vào ảnh để xem nha</div>
     </div>
 
     <script type="module">
@@ -91,12 +130,24 @@
         import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
         import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js'; 
 
-        // --- KHU VỰC CHỈNH SỬA ẢNH CỦA BẠN ---
-        // Hãy dán đường link ảnh (URL) vào trong dấu ngoặc kép bên dưới.
-        // Ngăn cách mỗi link bằng dấu phẩy.
+        // --- DANH SÁCH ẢNH CỦA BẠN ---
         const MY_IMAGES = [
-            // Thêm link ảnh của bạn vào đây...
-            
+            "./image/20230804_110314.jpg",
+            "./image/IMG_20230806_221028.jpg",
+            "./image/IMG_20230912_105753.jpg",
+            "./image/IMG_20231124_062155.jpg",
+            "./image/IMG_20240117_235303.jpg",
+            "./image/IMG_20240203_222102.jpg",
+            "./image/IMG_20240218_231204.jpg",
+            "./image/IMG_20240413_205532.jpg",
+            "./image/IMG_20241126_051206.jpg",
+            "./image/IMG_20250109_111600.jpg",
+            "./image/IMG_20250206_090444.jpg",
+            "./image/IMG_20250309_052429.jpg",
+            "./image/IMG_20250309_052439.jpg",
+            "./image/IMG_20250512_143622.jpg",
+            "./image/IMG_1726411456659_1726461827564.jpg",
+            "./image/IMG_1762893238586_1762908270887.jpg"
         ];
 
         // --- CẤU HÌNH ---
@@ -109,8 +160,8 @@
             },
             particles: {
                 count: 1500,     
-                dustCount: 2500, 
-                treeHeight: 24,  
+                dustCount: 2000, 
+                treeHeight: 25,  
                 treeRadius: 8    
             },
             camera: {
@@ -119,9 +170,10 @@
         };
 
         const STATE = {
-            mode: 'TREE', 
             rotation: { x: 0, y: 0 },
-            mouse: { x: 0, y: 0 } // Thêm trạng thái chuột
+            targetRotationY: 0,
+            mouse: { x: 0, y: 0 },
+            isPaused: false // Dừng xoay khi xem ảnh
         };
 
         let scene, camera, renderer, composer;
@@ -130,18 +182,19 @@
         let particleSystem = []; 
         let photoMeshGroup = new THREE.Group();
         let caneTexture; 
+        
+        const raycaster = new THREE.Raycaster();
+        const mouseVector = new THREE.Vector2();
 
         async function init() {
             initThree();
             setupEnvironment(); 
             setupLights();
             createTextures();
-            createParticles(); 
+            createDecorations();
             createDust();     
             setupPostProcessing();
             setupEvents();
-            
-            // Tải ảnh từ danh sách MY_IMAGES
             loadPredefinedImages();
 
             const loader = document.getElementById('loader');
@@ -151,23 +204,20 @@
             animate();
         }
 
-        // Hàm mới để tải ảnh từ link có sẵn
         function loadPredefinedImages() {
             const textureLoader = new THREE.TextureLoader();
-            // Cho phép tải ảnh từ domain khác (tránh lỗi CORS nếu server cho phép)
             textureLoader.crossOrigin = "Anonymous"; 
+            const totalImages = MY_IMAGES.length;
 
-            MY_IMAGES.forEach(url => {
+            MY_IMAGES.forEach((url, index) => {
                 textureLoader.load(
                     url, 
                     (texture) => {
                         texture.colorSpace = THREE.SRGBColorSpace;
-                        addPhotoToScene(texture);
+                        addPhotoToScene(texture, index, totalImages, url);
                     },
-                    undefined, // onProgress
-                    (err) => {
-                        console.warn("Không tải được ảnh:", url);
-                    }
+                    undefined, 
+                    (err) => { console.warn("Lỗi ảnh:", url); }
                 );
             });
         }
@@ -176,7 +226,7 @@
             const container = document.getElementById('canvas-container');
             scene = new THREE.Scene();
             scene.background = new THREE.Color(CONFIG.colors.bg);
-            scene.fog = new THREE.FogExp2(CONFIG.colors.bg, 0.01); 
+            scene.fog = new THREE.FogExp2(CONFIG.colors.bg, 0.015); 
 
             camera = new THREE.PerspectiveCamera(42, window.innerWidth / window.innerHeight, 0.1, 1000);
             camera.position.set(0, 2, CONFIG.camera.z); 
@@ -256,63 +306,33 @@
                 this.type = type;
                 this.isDust = isDust;
                 
-                this.posTree = new THREE.Vector3();
+                this.originalPos = new THREE.Vector3(mesh.position.x, mesh.position.y, mesh.position.z);
+                this.originalRot = new THREE.Euler(mesh.rotation.x, mesh.rotation.y, mesh.rotation.z);
+                
                 this.baseScale = mesh.scale.x; 
-
-                // Individual Spin Speed
-                const speedMult = (type === 'PHOTO') ? 0.3 : 2.0;
-
-                this.spinSpeed = new THREE.Vector3(
-                    (Math.random() - 0.5) * speedMult,
-                    (Math.random() - 0.5) * speedMult,
-                    (Math.random() - 0.5) * speedMult
-                );
-
-                this.calculatePositions();
             }
 
-            calculatePositions() {
-                // TREE: Tight Spiral
-                const h = CONFIG.particles.treeHeight;
-                const halfH = h / 2;
-                let t = Math.random(); 
-                t = Math.pow(t, 0.8); 
-                const y = (t * h) - halfH;
-                let rMax = CONFIG.particles.treeRadius * (1.0 - t); 
-                if (rMax < 0.5) rMax = 0.5;
-                const angle = t * 50 * Math.PI + Math.random() * Math.PI; 
-                const r = rMax * (0.8 + Math.random() * 0.4); 
-                this.posTree.set(Math.cos(angle) * r, y, Math.sin(angle) * r);
-            }
-
-            update(dt, mode) {
-                // Luôn luôn là dạng cây (TREE)
-                let target = this.posTree;
+            update(dt) {
+                // Giữ nguyên vị trí trên cây
+                this.mesh.position.lerp(this.originalPos, 2 * dt);
                 
-                // Movement Easing
-                const lerpSpeed = 2.0; 
-                this.mesh.position.lerp(target, lerpSpeed * dt);
+                if (this.type !== 'DUST') {
+                    this.mesh.rotation.x = THREE.MathUtils.lerp(this.mesh.rotation.x, this.originalRot.x, dt);
+                    this.mesh.rotation.y = THREE.MathUtils.lerp(this.mesh.rotation.y, this.originalRot.y, dt);
+                    this.mesh.rotation.z = THREE.MathUtils.lerp(this.mesh.rotation.z, this.originalRot.z, dt);
+                }
 
-                // Reset rotations slowly
-                this.mesh.rotation.x = THREE.MathUtils.lerp(this.mesh.rotation.x, 0, dt);
-                this.mesh.rotation.z = THREE.MathUtils.lerp(this.mesh.rotation.z, 0, dt);
-                this.mesh.rotation.y += 0.5 * dt; 
-                
-                // Scale Logic
                 let s = this.baseScale;
                 if (this.isDust) {
                     s = this.baseScale * (0.8 + 0.4 * Math.sin(clock.elapsedTime * 4 + this.mesh.id));
                 } else if (this.type === 'PHOTO') {
-                    // Tăng kích thước ảnh lên một chút để dễ nhìn hơn
-                    s = this.baseScale * 1.5;
+                    s = this.baseScale * 1.5; 
                 }
-                
                 this.mesh.scale.lerp(new THREE.Vector3(s,s,s), 4*dt);
             }
         }
 
-        // --- CREATION ---
-        function createParticles() {
+        function createDecorations() {
             const sphereGeo = new THREE.SphereGeometry(0.5, 32, 32); 
             const boxGeo = new THREE.BoxGeometry(0.55, 0.55, 0.55); 
             const curve = new THREE.CatmullRomCurve3([
@@ -322,53 +342,42 @@
             const candyGeo = new THREE.TubeGeometry(curve, 16, 0.08, 8, false);
 
             const goldMat = new THREE.MeshStandardMaterial({
-                color: CONFIG.colors.champagneGold,
-                metalness: 1.0, roughness: 0.1,
-                envMapIntensity: 2.0, 
-                emissive: 0x443300,   
-                emissiveIntensity: 0.3
+                color: CONFIG.colors.champagneGold, metalness: 1.0, roughness: 0.1,
+                envMapIntensity: 2.0, emissive: 0x443300, emissiveIntensity: 0.3
             });
-
             const greenMat = new THREE.MeshStandardMaterial({
-                color: CONFIG.colors.deepGreen,
-                metalness: 0.2, roughness: 0.8,
-                emissive: 0x002200,
-                emissiveIntensity: 0.2 
+                color: CONFIG.colors.deepGreen, metalness: 0.2, roughness: 0.8,
+                emissive: 0x002200, emissiveIntensity: 0.2 
             });
-
             const redMat = new THREE.MeshPhysicalMaterial({
-                color: CONFIG.colors.accentRed,
-                metalness: 0.3, roughness: 0.2, clearcoat: 1.0,
+                color: CONFIG.colors.accentRed, metalness: 0.3, roughness: 0.2, clearcoat: 1.0,
                 emissive: 0x330000
             });
-            
             const candyMat = new THREE.MeshStandardMaterial({ map: caneTexture, roughness: 0.4 });
 
             for (let i = 0; i < CONFIG.particles.count; i++) {
                 const rand = Math.random();
                 let mesh, type;
                 
-                if (rand < 0.40) {
-                    mesh = new THREE.Mesh(boxGeo, greenMat);
-                    type = 'BOX';
-                } else if (rand < 0.70) {
-                    mesh = new THREE.Mesh(boxGeo, goldMat);
-                    type = 'GOLD_BOX';
-                } else if (rand < 0.92) {
-                    mesh = new THREE.Mesh(sphereGeo, goldMat);
-                    type = 'GOLD_SPHERE';
-                } else if (rand < 0.97) {
-                    mesh = new THREE.Mesh(sphereGeo, redMat);
-                    type = 'RED';
-                } else {
-                    mesh = new THREE.Mesh(candyGeo, candyMat);
-                    type = 'CANE';
-                }
+                if (rand < 0.40) { mesh = new THREE.Mesh(boxGeo, greenMat); type = 'BOX'; } 
+                else if (rand < 0.70) { mesh = new THREE.Mesh(boxGeo, goldMat); type = 'GOLD_BOX'; } 
+                else if (rand < 0.92) { mesh = new THREE.Mesh(sphereGeo, goldMat); type = 'GOLD_SPHERE'; } 
+                else if (rand < 0.97) { mesh = new THREE.Mesh(sphereGeo, redMat); type = 'RED'; } 
+                else { mesh = new THREE.Mesh(candyGeo, candyMat); type = 'CANE'; }
 
                 const s = 0.4 + Math.random() * 0.5;
                 mesh.scale.set(s,s,s);
                 mesh.rotation.set(Math.random()*6, Math.random()*6, Math.random()*6);
                 
+                const h = CONFIG.particles.treeHeight;
+                let t = Math.random(); t = Math.pow(t, 0.8);
+                const y = (t * h) - h/2;
+                let rMax = CONFIG.particles.treeRadius * (1.0 - t); if (rMax < 0.5) rMax = 0.5;
+                const angle = t * 50 * Math.PI + Math.random() * Math.PI;
+                const r = rMax * (0.8 + Math.random() * 0.4);
+                
+                mesh.position.set(Math.cos(angle)*r, y, Math.sin(angle)*r);
+
                 mainGroup.add(mesh);
                 particleSystem.push(new Particle(mesh, type, false));
             }
@@ -388,16 +397,19 @@
         function createDust() {
             const geo = new THREE.TetrahedronGeometry(0.08, 0);
             const mat = new THREE.MeshBasicMaterial({ color: 0xffeebb, transparent: true, opacity: 0.8 });
-            
             for(let i=0; i<CONFIG.particles.dustCount; i++) {
                  const mesh = new THREE.Mesh(geo, mat);
                  mesh.scale.setScalar(0.5 + Math.random());
+                 const r = (12 + Math.random()*20);
+                 const theta = Math.random() * Math.PI * 2;
+                 const phi = Math.acos(2 * Math.random() - 1);
+                 mesh.position.set(r*Math.sin(phi)*Math.cos(theta), r*Math.sin(phi)*Math.sin(theta), r*Math.cos(phi));
                  mainGroup.add(mesh);
                  particleSystem.push(new Particle(mesh, 'DUST', true));
             }
         }
 
-        function addPhotoToScene(texture) {
+        function addPhotoToScene(texture, index, total, url) {
             const frameGeo = new THREE.BoxGeometry(1.4, 1.4, 0.05);
             const frameMat = new THREE.MeshStandardMaterial({ color: CONFIG.colors.champagneGold, metalness: 1.0, roughness: 0.1 });
             const frame = new THREE.Mesh(frameGeo, frameMat);
@@ -411,11 +423,37 @@
             group.add(frame);
             group.add(photo);
             
+            group.name = "PHOTO_FRAME";
+            // LƯU ĐƯỜNG DẪN ẢNH VÀO USERDATA ĐỂ DÙNG KHI CLICK
+            group.userData = { isPhoto: true, id: index, imgUrl: url };
+
             const s = 0.8;
             group.scale.set(s,s,s);
             
+            const step = 0.9 / total; 
+            const t = 0.05 + (index * step); 
+            
+            const h = CONFIG.particles.treeHeight;
+            const y = (t * h) - h/2; 
+            
+            let rMax = CONFIG.particles.treeRadius * (1.0 - t); 
+            if (rMax < 1.0) rMax = 1.0;
+            const r = rMax + 0.5; 
+            
+            const goldenAngle = Math.PI * (3 - Math.sqrt(5)); 
+            const angle = index * goldenAngle * 5; 
+
+            const posX = Math.cos(angle) * r;
+            const posZ = Math.sin(angle) * r;
+
+            group.position.set(posX, y, posZ);
+            group.lookAt(0, y, 0); 
+            group.rotateY(Math.PI); 
+
             photoMeshGroup.add(group);
-            particleSystem.push(new Particle(group, 'PHOTO', false));
+            
+            const p = new Particle(group, 'PHOTO', false);
+            particleSystem.push(p);
         }
         
         function setupEvents() {
@@ -426,18 +464,63 @@
                 composer.setSize(window.innerWidth, window.innerHeight);
             });
 
-            // Lắng nghe sự kiện di chuyển chuột
+            // SCROLL EVENT
+            document.addEventListener('wheel', (event) => {
+                if (STATE.isPaused) return; // Không xoay khi đang xem ảnh
+                STATE.targetRotationY += event.deltaY * 0.005;
+            });
+
+            // MOUSE MOVE (Highlight)
             document.addEventListener('mousemove', (event) => {
-                // Chuẩn hóa tọa độ chuột từ -1 đến 1
-                STATE.mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
-                STATE.mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+                mouseVector.x = (event.clientX / window.innerWidth) * 2 - 1;
+                mouseVector.y = -(event.clientY / window.innerHeight) * 2 + 1;
+                
+                if (STATE.isPaused) return;
+
+                raycaster.setFromCamera(mouseVector, camera);
+                const intersects = raycaster.intersectObjects(photoMeshGroup.children, true);
+                if (intersects.length > 0) {
+                    document.body.classList.add('interacting');
+                } else {
+                    document.body.classList.remove('interacting');
+                }
+            });
+
+            // MOUSE CLICK (OPEN OVERLAY)
+            document.addEventListener('click', (event) => {
+                // Nếu đang mở overlay thì đóng lại
+                const overlay = document.getElementById('image-overlay');
+                if (STATE.isPaused) {
+                    overlay.classList.remove('active');
+                    STATE.isPaused = false;
+                    return;
+                }
+
+                // Nếu chưa mở, kiểm tra xem click trúng ảnh không
+                raycaster.setFromCamera(mouseVector, camera);
+                const intersects = raycaster.intersectObjects(photoMeshGroup.children, true);
+
+                if (intersects.length > 0) {
+                    let target = intersects[0].object;
+                    while(target.parent && target.name !== 'PHOTO_FRAME') {
+                        target = target.parent;
+                    }
+                    
+                    if (target.name === 'PHOTO_FRAME') {
+                        // LẤY URL TỪ USERDATA VÀ HIỆN POPUP
+                        const imgUrl = target.userData.imgUrl;
+                        document.getElementById('overlay-img').src = imgUrl;
+                        overlay.classList.add('active');
+                        STATE.isPaused = true; // Dừng xoay cây
+                    }
+                }
             });
             
-            // Hỗ trợ cảm ứng cho điện thoại
+            // Touch support
             document.addEventListener('touchmove', (event) => {
                 if(event.touches.length > 0) {
-                    STATE.mouse.x = (event.touches[0].clientX / window.innerWidth) * 2 - 1;
-                    STATE.mouse.y = -(event.touches[0].clientY / window.innerHeight) * 2 + 1;
+                    mouseVector.x = (event.touches[0].clientX / window.innerWidth) * 2 - 1;
+                    mouseVector.y = -(event.touches[0].clientY / window.innerHeight) * 2 + 1;
                 }
             }, { passive: false });
         }
@@ -446,22 +529,15 @@
             requestAnimationFrame(animate);
             const dt = clock.getDelta();
 
-            // LOGIC XOAY THEO CHUỘT
-            // Mục tiêu xoay trục Y dựa trên vị trí chuột X
-            const targetRotY = STATE.mouse.x * Math.PI * 0.5; // Xoay tối đa 90 độ mỗi bên
-            const targetRotX = STATE.mouse.y * Math.PI * 0.1; // Xoay nhẹ trục X
+            // LOGIC XOAY
+            if (!STATE.isPaused) {
+                STATE.rotation.y += (STATE.targetRotationY - STATE.rotation.y) * 5.0 * dt;
+                STATE.rotation.x = THREE.MathUtils.lerp(STATE.rotation.x, 0, dt);
+                mainGroup.rotation.y = STATE.rotation.y;
+                mainGroup.rotation.x = STATE.rotation.x;
+            } 
 
-            // Hiệu ứng quán tính (lerp) để xoay mượt mà
-            STATE.rotation.y += (targetRotY - STATE.rotation.y) * 2.0 * dt;
-            STATE.rotation.x += (targetRotX - STATE.rotation.x) * 2.0 * dt;
-
-            // Xoay tự động nhẹ khi không di chuyển chuột quá nhiều
-            STATE.rotation.y += 0.1 * dt; 
-
-            mainGroup.rotation.y = STATE.rotation.y;
-            mainGroup.rotation.x = STATE.rotation.x;
-
-            particleSystem.forEach(p => p.update(dt, STATE.mode));
+            particleSystem.forEach(p => p.update(dt));
             composer.render();
         }
 
